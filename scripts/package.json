@@ -13,6 +13,7 @@
     "@aws-sdk/util-dynamodb": "^3.328.0"
   },
   "dependencies": {
-    "@faker-js/faker": "^7.6.0"
+    "@faker-js/faker": "^7.6.0",
+    "axios": "^1.4.0"
   }
 }

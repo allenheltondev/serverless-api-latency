@@ -130,10 +130,8 @@ Resources:
         - Version: 2012-10-17
           Statement:            
             - Effect: Allow
-              Action:
-                - dynamodb:Query
-              Resource: 
-                - !Sub ${LatencyTable.Arn}/index/breed
+              Action: dynamodb:Query
+              Resource: !Sub ${LatencyTable.Arn}/index/breed
             - Effect: Allow
               Action:
                 - logs:CreateLogDelivery
@@ -194,10 +192,8 @@ Resources:
           PolicyDocument:
             Statement:            
             - Effect: Allow
-              Action:
-                - dynamodb:Query
-              Resource:
-                - !GetAtt LatencyTable.Arn
+              Action: dynamodb:Query
+              Resource: !Sub ${LatencyTable.Arn}/index/breed
 
   LatencyService:
     Type: AWS::AppRunner::Service
@@ -205,12 +201,12 @@ Resources:
     Properties:
       SourceConfiguration:
         AuthenticationConfiguration:
-          ConnectionArn: !Ref GitHubConnection
+          ConnectionArn: !Ref GitHubConnectionArn
         AutoDeploymentsEnabled: true
         CodeRepository:
           CodeConfiguration:
             ConfigurationSource: REPOSITORY
-          RepositoryUrl: https://github.com/allenheltondev/
+          RepositoryUrl: !Ref GitHubRepositoryUrl
           SourceCodeVersion:
             Type: BRANCH
             Value: main
