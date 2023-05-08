@@ -1,0 +1,218 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Benchmark Serverless API Latency 4 Ways
+
+Parameters:
+  GitHubConnectionArn:
+    Type: String
+    Default: ''
+  GitHubRepositoryUrl:
+    Type: String
+    Default: ''
+
+Conditions:
+  DeployAppRunner:
+    !And
+      - !Not [!Equals [!Ref GitHubConnectionArn, '']]
+      - !Not [!Equals [!Ref GitHubRepositoryUrl, '']]
+
+Globals:
+  Function:
+    Runtime: nodejs18.x
+    Architectures:
+      - arm64
+    Tracing: Active
+    Timeout: 3
+    Handler: index.handler
+    Environment:
+      Variables:
+        AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+
+Resources:
+  LatencyApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      TracingEnabled: true
+      StageName: dev
+      MethodSettings:
+        - MetricsEnabled: True
+          ResourcePath: '/*'
+          HttpMethod: '*'
+          LoggingLevel: ERROR
+          DataTraceEnabled: True
+      DefinitionBody:
+        Fn::Transform:
+          Name: AWS::Include
+          Parameters:
+            Location: ./openapi.yaml
+
+  DirectIntegrationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - apigateway.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: DirectIntegrationPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: dynamodb:Query
+                Resource: !Sub ${LatencyTable.Arn}/index/breed
+
+  LambdaIntegrationFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/lambda-integration
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action: dynamodb:Query
+              Resource: !Sub ${LatencyTable.Arn}/index/breed
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref LatencyTable
+      Events:
+        AddGopherStatusEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref LatencyApi
+            Path: /turkeys/{breed}
+            Method: get
+
+  LatencyTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST      
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+        - AttributeName: breed
+          AttributeType: S
+        - AttributeName: name
+          AttributeType: S
+      GlobalSecondaryIndexes:
+        - IndexName: breed
+          KeySchema:
+            - AttributeName: breed
+              KeyType: HASH
+            - AttributeName: name
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  LatencyStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Type: EXPRESS
+      DefinitionUri: workflows/state-machine-integration.asl.json
+      DefinitionSubstitutions:
+        DynamoDbQuery: !Sub arn:${AWS::Partition}:states:::aws-sdk:dynamodb:query
+        TableName: !Ref LatencyTable
+      Policies:
+        - Version: 2012-10-17
+          Statement:            
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+              Resource: 
+                - !Sub ${LatencyTable.Arn}/index/breed
+            - Effect: Allow
+              Action:
+                - logs:CreateLogDelivery
+                - logs:GetLogDelivery
+                - logs:UpdateLogDelivery
+                - logs:DeleteLogDelivery
+                - logs:ListLogDeliveries
+                - logs:PutResourcePolicy
+                - logs:DescribeResourcePolicies
+                - logs:DescribeLogGroups
+              Resource: "*"
+      Logging:
+        Level: ALL
+        IncludeExecutionData: true
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt LatencyStateMachineLogGroup.Arn
+
+  LatencyStateMachineLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: 3
+
+  LatencyStateMachineAPIGRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - apigateway.amazonaws.com
+            Action:
+              - sts:AssumeRole      
+      Policies:
+        - PolicyName: LatencyStateMachinePolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - states:StartSyncExecution
+                Resource: !Ref LatencyStateMachine
+
+  LatencyAppRunnerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: tasks.apprunner.amazonaws.com
+            Action: sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: LatencyAppRunnerRole
+          PolicyDocument:
+            Statement:            
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+              Resource:
+                - !GetAtt LatencyTable.Arn
+
+  LatencyService:
+    Type: AWS::AppRunner::Service
+    Condition: DeployAppRunner
+    Properties:
+      SourceConfiguration:
+        AuthenticationConfiguration:
+          ConnectionArn: !Ref GitHubConnection
+        AutoDeploymentsEnabled: true
+        CodeRepository:
+          CodeConfiguration:
+            ConfigurationSource: REPOSITORY
+          RepositoryUrl: https://github.com/allenheltondev/
+          SourceCodeVersion:
+            Type: BRANCH
+            Value: main
+      InstanceConfiguration:
+        InstanceRoleArn: !GetAtt LatencyAppRunnerRole.Arn

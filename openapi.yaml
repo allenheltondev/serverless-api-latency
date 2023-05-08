@@ -1,0 +1,195 @@
+openapi: 3.0.0
+info:
+  title: Serverless Latency API
+  description: |
+    Test the latencies of different serverless components
+  version: 1.0.0
+
+x-amazon-apigateway-request-validators:
+  Validate All:
+    validateRequestParameters: true
+    validateRequestBody: true
+x-amazon-apigateway-gateway-responses:
+  BAD_REQUEST_BODY:
+    statusCode: 400
+    responseTemplates:
+      application/json: '{ "message": "$context.error.validationErrorString" }'
+  
+paths:
+  /turkeys/{breed}:
+    parameters:
+      - $ref: '#/components/parameters/breed'
+    get:
+      summary: Get turkeys via a Lambda function
+      responses:
+        200:
+          description: The list of turkeys has been returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TurkeyList'
+        500:
+          $ref: '#/components/responses/UnknownError'
+      x-amazon-apigateway-request-validator: Validate All
+      x-amazon-apigateway-integration:
+        uri:
+          Fn::Sub: arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaIntegrationFunction.Arn}/invocations
+        httpMethod: POST
+        type: aws_proxy
+  
+  /direct-integration/turkeys/{breed}:
+    parameters:
+      - $ref: '#/components/parameters/breed'
+    get:
+      summary: Get turkeys via direct integration
+      responses:
+        200:
+          description: The list of turkeys has been returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TurkeyList'
+        500:
+          $ref: '#/components/responses/UnknownError'
+      x-amazon-apigateway-request-validator: Validate All
+      x-amazon-apigateway-integration:
+        credentials:
+          Fn::Sub: ${DirectIntegrationRole.Arn}
+        uri:
+          Fn::Sub: arn:${AWS::Partition}:apigateway:${AWS::Region}:dynamodb:action/Query
+        httpMethod: POST
+        type: aws
+        passthroughBehavior: never
+        requestTemplates:
+          application/json:
+            Fn::Sub:
+              - |-
+                {
+                  "TableName": "${TableName}",
+                  "IndexName": "breed",
+                  "KeyConditionExpression": "#breed = :breed",
+                  "ExpressionAttributeNames": {
+                    "#breed": "breed"
+                  },
+                  "ExpressionAttributeValues": {
+                    ":breed": { "S": "$input.params('breed')" }
+                  }
+                }
+              - { TableName: { Ref: LatencyTable } }
+        responses:
+          200:
+            statusCode: 200
+            responseTemplates:
+              application/json: |
+                #set($context.responseOverride.header.Access-Control-Allow-Origin = '*')
+                #set($inputRoot = $input.path('$'))
+                [
+                  #foreach($elem in $inputRoot.Items) {
+                    "id": "$elem.pk.S",
+                    "name": "$elem.sk.S",                    
+                    "breed": "$elem.breed.S",
+                    "weight": "$elem.weight.S"
+                  }
+                  #end
+                ]
+          500:
+            statusCode: 500
+            responseTemplates:
+              application/json: |
+                #set($inputRoot = $input.path('$'))
+                $inputRoot
+
+  /state-machine/turkeys/{breed}:
+    parameters:
+      - $ref: '#/components/parameters/breed'
+    get:
+      summary: Get turkeys via a synchronous express state machine
+      responses:
+        200:
+          description: The list of turkeys has been returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TurkeyList'
+        500:
+          $ref: '#/components/responses/UnknownError'
+      x-amazon-apigateway-request-validator: Validate All
+      x-amazon-apigateway-integration:
+        credentials:
+          Fn::Sub: ${LatencyStateMachineAPIGRole.Arn}
+        uri:
+          Fn::Sub: arn:${AWS::Partition}:apigateway:${AWS::Region}:states:action/StartSyncExecution
+        httpMethod: POST
+        type: aws
+        requestTemplates:
+          application/json:
+            Fn::Sub:  
+              - |-
+                #set($body = "{""breed"" : ""$input.params('breed')""}")
+                {
+                    "input": "$util.escapeJavaScript($body)",
+                    "stateMachineArn": "${StateMachine}"
+                }
+              - { StateMachine: { "Ref": "LatencyStateMachine" }}
+        responses:
+          200:
+            statusCode: 200
+            responseTemplates:
+              application/json: |
+                #set($context.responseOverride.header.Access-Control-Allow-Origin = '*')
+                #set($output = $input.path('$.output'))
+                $output
+          500:
+            statusCode: 500
+            responseTemplates:
+              application/json: |
+                #set($inputRoot = $input.path('$'))
+                $inputRoot
+
+components:
+  parameters:
+    breed:
+      name: breed
+      in: path
+      description: Unique identifier for a turkey breed
+      required: true
+      schema:
+        type: string
+
+  schemas:
+    TurkeyList:
+      description: List of turkeys matching the requested breed
+      type: array
+      items:
+        type: object
+        properties:
+          id:
+            type: string
+            description: Unique identifier of the turkey
+          name:
+            type: string
+            description: The turkey's name
+            example: Gerry
+          breed:
+            type: string
+            description: Turkey breed
+            example: Bourbon Red
+          weight:
+            type: string
+            description: Weight in pounds and ounces
+            example: 12 pounds 13 oz      
+
+  responses:
+    UnknownError:
+      description: An unexpected error occurred on the server.
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - message
+            properties:
+              message:
+                type: string
+                description: Unknown error message
+                example: An unexpected error occurred.

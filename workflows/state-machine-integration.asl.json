@@ -1,0 +1,50 @@
+{
+  "Comment": "Get Turkeys out of the database",
+  "StartAt": "Get Turkeys",
+  "States": {
+    "Get Turkeys": {
+      "Type": "Task",
+      "Parameters": {
+        "TableName": "${TableName}",
+        "IndexName": "breed",
+        "KeyConditionExpression": "#breed = :breed",
+        "ExpressionAttributeNames": {
+          "#breed": "breed"
+        },
+        "ExpressionAttributeValues": {
+          ":breed": {
+            "S.$": "$.breed"
+          }
+        }
+      },
+      "Resource": "${DynamoDbQuery}",
+      "Next": "Parse Data"
+    },
+    "Parse Data": {
+      "Type": "Map",
+      "ItemProcessor": {
+        "ProcessorConfig": {
+          "Mode": "INLINE"
+        },
+        "StartAt": "Format Output Data",
+        "States": {
+          "Format Output Data": {
+            "Type": "Pass",
+            "End": true,
+            "Parameters": {
+              "id.$": "$.pk.S",
+              "breed.$": "$.breed.S",
+              "name.$": "$.sk.S",
+              "weight.$": "$.weight.S"              
+            }
+          }
+        }
+      },
+      "Next": "Success",
+      "ItemsPath": "$.Items"
+    },
+    "Success": {
+      "Type": "Succeed"
+    }
+  }  
+}

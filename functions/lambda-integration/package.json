@@ -1,0 +1,15 @@
+{
+  "name": "lambda-integration",
+  "version": "1.0.0",
+  "description": "Queries a dynamodb index for data",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "allenheltondev",
+  "license": "MIT",
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.328.0",
+    "@aws-sdk/util-dynamodb": "^3.328.0"
+  }
+}
