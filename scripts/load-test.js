@@ -1,20 +1,58 @@
 const axios = require('axios');
 const fs = require('fs');
-const ids = require('./ids.json');
+const breeds = ["Auburn", "Beltsville Small White", "Black", "Bourbon Red", "Bronze", "Jersey Buff", "Narragansett", "Royal Palm", "Slate", "White Holland"];
 
-const numRequests = 100;
-const numParallelRequests = 10;
-//const endpointUrl = 'https://3b5lnq244b.execute-api.us-east-1.amazonaws.com/dev/direct-integration/turkeys/';
-const endpointUrl = 'https://umttgumwsu.us-east-1.awsapprunner.com/turkeys/';
+const numRequests = 50000;
+const numParallelRequests = 5000;
+const endpoints = [
+  
+]
 
-async function runParallelRequests() {
+async function runRequests() {
+  const endpointResults = [];
+  for (const endpoint of endpoints) {
+    const statusCodes = {};
+    const results = await runParallelRequests(endpoint);
+    results.statuses.forEach(statusCode => {
+      if (statusCodes[statusCode]) {
+        statusCodes[statusCode]++;
+      } else {
+        statusCodes[statusCode] = 1;
+      }
+    });
+
+    const successfulExecutionTimes = results.executionTimes.filter(time => time > 0);
+    const averageDuration = successfulExecutionTimes.reduce((acc, val) => acc + val, 0) / successfulExecutionTimes.length;
+    const p99Duration = successfulExecutionTimes.sort((a, b) => b - a)[Math.floor(successfulExecutionTimes.length * 0.01)];
+    const fastestDuration = successfulExecutionTimes.sort((a, b) => a - b)[0];
+    endpointResults.push({
+      endpoint,
+      stats: {
+        p99: p99Duration,
+        averageDuration,
+        fastestDuration,
+        statusCodes
+      }
+    });
+  }
+
+  const results = {
+    numberOfRequests: numRequests,
+    parallelExecutions: numParallelRequests,
+    data: endpointResults
+  };
+  fs.writeFileSync(`results-${new Date().toISOString().split('.')[0].replace(/:/g, '.')}.json`, JSON.stringify(results, null, 2));
+}
+
+async function runParallelRequests(endpoint) {
   const batches = [];
-  const totalRequests = new Array(numRequests).fill(endpointUrl);
+  const totalRequests = new Array(numRequests).fill(endpoint);
+  batchSize = Math.ceil(numRequests / numParallelRequests);
   while (totalRequests.length) {
-    const batch = totalRequests.splice(0, numParallelRequests);
+    const batch = totalRequests.splice(0, batchSize);
     for (let i = 0; i < batch.length; i++) {
-      const randomIndex = Math.floor(Math.random() * ids.length);
-      const breed = ids[randomIndex];
+      const randomIndex = Math.floor(Math.random() * breeds.length);
+      const breed = breeds[randomIndex];
       batch[i] = `${batch[i]}${breed}`;
     }
     batches.push(batch);
@@ -40,37 +78,16 @@ async function runBatch(batch) {
       }
       statuses.push(response.status);
     } catch (error) {
-      statuses.push(error.response.status);
+      if (error.response) {
+        statuses.push(error.response.status);
+      } else if (error.status) {
+        statuses.push(error.response.status);
+      }
+      console.error(`${error.response?.status} - ${error.response?.statusText}`);
     }
   }
 
   return { statuses, executionTimes };
 };
 
-// Run the requests in parallel for the specified number of times
-async function runRequests() {
-  const statusCodes = {};
-  const results = await runParallelRequests();
-  results.statuses.forEach(statusCode => {
-    if (statusCodes[statusCode]) {
-      statusCodes[statusCode]++;
-    } else {
-      statusCodes[statusCode] = 1;
-    }
-  });
-
-  const successfulExecutionTimes = results.executionTimes.filter(time => time > 0);
-  const averageDuration = successfulExecutionTimes.reduce((acc, val) => acc + val, 0) / successfulExecutionTimes.length;
-  const p99Duration = successfulExecutionTimes.sort((a, b) => b - a)[Math.floor(successfulExecutionTimes.length * 0.01)];
-  const fastestDuration = successfulExecutionTimes.sort((a, b) => a - b)[0];
-  const stats = {
-    p99: p99Duration,
-    averageDuration,
-    fastestDuration,
-    statusCodes
-  };
-  fs.writeFileSync('results.json', JSON.stringify({ stats, executionTimes: successfulExecutionTimes }, null, 2));
-}
-
-// Call the runRequests function
 runRequests();
